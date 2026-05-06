@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>月次タスク管理 — プログラミング教室テクノロ</title>
+  <link rel="icon" href="/favicon.ico">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f5f5f3; --surface: #ffffff;
+      --border: rgba(0,0,0,0.10); --border-md: rgba(0,0,0,0.18);
+      --text: #1a1a18; --text-2: #6b6b66; --text-3: #a0a09a;
+      --blue: #378ADD; --blue-dark: #185FA5;
+      --green: #639922; --red: #E24B4A; --amber: #BA7517;
+      --radius: 8px; --radius-lg: 12px;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: var(--bg); color: var(--text); font-size: 14px; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+    /* Header */
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+    .header h1 { font-size: 17px; font-weight: 500; }
+    .header p  { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+    .header-right { display: flex; gap: 8px; align-items: center; }
+
+    /* Buttons */
+    .btn { height: 32px; padding: 0 14px; border-radius: var(--radius); font-size: 13px;
+           cursor: pointer; border: 1px solid var(--border-md); background: var(--surface);
+           color: var(--text); display: inline-flex; align-items: center; gap: 5px;
+           font-family: inherit; transition: background .15s; }
+    .btn:hover { background: var(--bg); }
+    .btn-primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue-dark); border-color: var(--blue-dark); }
+    .btn-danger { background: var(--red); border-color: var(--red); color: #fff; }
+    .btn-danger:hover { background: #c03a39; border-color: #c03a39; }
+
+    /* Gantt */
+    .gantt-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+    .gantt-head { display: flex; border-bottom: 1px solid var(--border); }
+    .task-col-head { width: 240px; flex-shrink: 0; padding: 8px 14px; font-size: 11px; font-weight: 500; color: var(--text-2); border-right: 1px solid var(--border); }
+    .days-head { flex: 1; display: grid; }
+    .dh { text-align: center; padding: 8px 0; font-size: 11px; color: var(--text-2); border-right: 1px solid var(--border); }
+    .dh:last-child { border-right: none; }
+    .dh.today { background: #e6f1fb; color: var(--blue-dark); font-weight: 600; }
+    .dh.sun { color: #A32D2D; } .dh.sat { color: var(--blue-dark); }
+
+    /* Gantt rows */
+    .gantt-row { display: flex; border-bottom: 1px solid var(--border); align-items: stretch; transition: opacity .2s; }
+    .gantt-row:last-child { border-bottom: none; }
+    .gantt-row.done { opacity: .38; }
+    .gantt-row.drag-over { background: #e6f1fb; }
+    .gantt-row.dragging { opacity: .4; }
+    .task-lbl { width: 240px; flex-shrink: 0; padding: 0 8px; display: flex; align-items: center; gap: 5px; border-right: 1px solid var(--border); min-height: 44px; }
+    .task-lbl span { font-size: 13px; flex: 1; line-height: 1.3; }
+    .done .task-lbl span { text-decoration: line-through; color: var(--text-3); }
+    .act { display: flex; gap: 3px; flex-shrink: 0; }
+
+    /* Icon buttons */
+    .icon-btn {
+      width: 20px; height: 20px; border-radius: 50%;
+      border: 1.5px solid var(--border-md); background: transparent;
+      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text-2); flex-shrink: 0;
+    }
+    .icon-btn:hover { border-color: var(--blue); color: var(--blue); }
+    .icon-btn.on { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .icon-btn.on svg { display: block; }
+    .icon-btn.chk svg { display: none; pointer-events: none; }
+    .icon-btn.chk.on svg { display: block; }
+    .icon-btn.rfsh { display: none; }
+    .icon-btn.rfsh.show { display: inline-flex; }
+    .icon-btn.del:hover { border-color: var(--red); color: var(--red); }
+
+    /* Drag handle */
+    .drag-handle { cursor: grab; color: var(--text-3); padding: 0 2px; flex-shrink: 0; }
+    .drag-handle:active { cursor: grabbing; }
+
+    /* Day cells */
+    .days-row { flex: 1; display: grid; position: relative; }
+    .dc { border-right: 1px solid var(--border); min-height: 44px; }
+    .dc:last-child { border-right: none; }
+    .dc.today { background: rgba(55,138,221,.05); }
+    .dc.wknd  { background: #fafaf8; }
+    .bar-layer { position: absolute; inset: 0; pointer-events: none; }
+    .bar { position: absolute; height: 14px; top: 15px; border-radius: 4px; }
+    .bar.pending { background: var(--blue); }
+    .bar.done    { background: var(--green); }
+    .bar.overdue { background: var(--red); }
+    .today-line  { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(55,138,221,.45); z-index: 5; }
+
+    /* Legend */
+    .legend { display: flex; gap: 16px; margin-top: 10px; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); }
+    .ldot { width: 10px; height: 10px; border-radius: 2px; }
+
+    /* Modal */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35);
+               display: flex; align-items: center; justify-content: center; z-index: 200; }
+    .modal { background: var(--surface); border: 1px solid var(--border);
+             border-radius: var(--radius-lg); padding: 1.5rem; width: 320px; }
+    .modal h3 { font-size: 15px; font-weight: 500; margin-bottom: 1.1rem; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+    .field input { width: 100%; height: 36px; border: 1px solid var(--border-md);
+                   border-radius: var(--radius); padding: 0 10px; font-size: 13px;
+                   font-family: inherit; background: var(--surface); color: var(--text); }
+    .field input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(55,138,221,.15); }
+    .err { font-size: 11px; color: var(--red); margin-top: 4px; }
+    .modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 1.2rem; }
+    .confirm-body { text-align: center; }
+    .confirm-body p { font-weight: 500; margin-bottom: 6px; }
+    .confirm-body small { font-size: 12px; color: var(--text-2); }
+    .confirm-body .modal-btns { justify-content: center; }
+
+    /* Toast */
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+             background: #1a1a18; color: #fff; font-size: 13px; padding: 8px 18px;
+             border-radius: 20px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 300; }
+    .toast.show { opacity: 1; }
+    .loading { text-align: center; padding: 2rem; color: var(--text-2); font-size: 13px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <h1 id="main-title">読み込み中...</h1>
+      <p>月次事務タスク — プログラミング教室テクノロ</p>
+    </div>
+    <div class="header-right">
+      <button class="btn btn-primary" onclick="openAdd()">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="1" x2="6" y2="11"/><line x1="1" y1="6" x2="11" y2="6"/></svg>
+        タスク追加
+      </button>
+      <button class="btn" onclick="changeMonth(-1)">&#8249;</button>
+      <button class="btn" onclick="changeMonth(1)">&#8250;</button>
+    </div>
+  </div>
+
+  <div id="gantt-wrap"><div class="loading">タスクを読み込んでいます...</div></div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="ldot" style="background:var(--blue)"></div>進行中</div>
+    <div class="legend-item"><div class="ldot" style="background:var(--green)"></div>完了</div>
+    <div class="legend-item"><div class="ldot" style="background:var(--red)"></div>期限超過</div>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPABASE_URL = "https://rnaccmvrdyxqtietvxtw.supabase.co";
+const SUPABASE_KEY = "sb_publishable_dvMeBnxvXhQBK54IwNkyKg_62ljkOwY";
+const TABLE = "tasks";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const TODAY = new Date();
+let viewYear  = TODAY.getFullYear();
+let viewMonth = TODAY.getMonth();
+let tasks = [];
+let dragSrcId = null;
+
+// ── CRUD ──────────────────────────────────────────
+async function fetchTasks() {
+  const { data, error } = await sb.from(TABLE).select("*")
+    .eq("year", viewYear).eq("month", viewMonth + 1)
+    .order("sort_order").order("id");
+  if (error) { toast("取得エラー: " + error.message); return; }
+  tasks = data || [];
+  render();
+}
+
+async function addTask(name, startDay, endDay) {
+  const insertPos = tasks.filter(t => t.start_day <= startDay).length + 1;
+  const updates = tasks
+    .filter(t => t.start_day > startDay)
+    .map(t => sb.from(TABLE).update({ sort_order: (t.sort_order || 0) + 1 }).eq("id", t.id));
+  await Promise.all(updates);
+  const { error } = await sb.from(TABLE).insert({
+    year: viewYear, month: viewMonth + 1,
+    name, start_day: startDay, end_day: endDay, done: false,
+    sort_order: insertPos
+  });
+  if (error) { toast("追加エラー: " + error.message); return; }
+  toast("タスクを追加しました"); fetchTasks();
+}
+
+async function copyTask(id) {
+  const t = tasks.find(t => t.id === id);
+  const maxOrder = tasks.reduce((m, t) => Math.max(m, t.sort_order || 0), 0);
+  const { error } = await sb.from(TABLE).insert({
+    year: t.year, month: t.month,
+    name: t.name + "（コピー）", start_day: t.start_day, end_day: t.end_day,
+    done: false, sort_order: maxOrder + 1
+  });
+  if (error) { toast("コピーエラー: " + error.message); return; }
+  toast("コピーしました"); fetchTasks();
+}
+
+async function deleteTask(id) {
+  const { error } = await sb.from(TABLE).delete().eq("id", id);
+  if (error) { toast("削除エラー: " + error.message); return; }
+  toast("削除しました"); fetchTasks();
+}
+
+async function setDone(id, done) {
+  const { error } = await sb.from(TABLE).update({ done }).eq("id", id);
+  if (error) { toast("更新エラー: " + error.message); return; }
+  toast(done ? "完了にしました" : "未完了に戻しました"); fetchTasks();
+}
+
+async function updateTask(id, name, startDay, endDay) {
+  const { error } = await sb.from(TABLE).update({ name, start_day: startDay, end_day: endDay }).eq("id", id);
+  if (error) { toast("更新エラー: " + error.message); return; }
+  toast("タスクを更新しました"); fetchTasks();
+}
+
+async function saveSortOrder() {
+  const updates = tasks.map((t, i) => sb.from(TABLE).update({ sort_order: i + 1 }).eq("id", t.id));
+  await Promise.all(updates);
+}
+
+// ── 描画 ──────────────────────────────────────────
+function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+
+function barState(t) {
+  if (t.done) return "done";
+  return new Date(viewYear, viewMonth, t.end_day) < TODAY ? "overdue" : "pending";
+}
+
+function render() {
+  const mn = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+  document.getElementById("main-title").textContent = viewYear + "年 " + mn[viewMonth];
+
+  const total  = daysInMonth(viewYear, viewMonth);
+  const isCur  = viewYear === TODAY.getFullYear() && viewMonth === TODAY.getMonth();
+  const todayD = TODAY.getDate();
+
+  let headHtml = "";
+  for (let d = 1; d <= total; d++) {
+    const dow = new Date(viewYear, viewMonth, d).getDay();
+    const cls = ["dh", isCur && d === todayD ? "today" : "", dow===0?"sun":dow===6?"sat":""].filter(Boolean).join(" ");
+    headHtml += `<div class="${cls}" style="grid-column:${d}">${d}</div>`;
+  }
+
+  let rowsHtml = "";
+  tasks.forEach(t => {
+    const state = barState(t);
+    const s = Math.max(1, t.start_day), e = Math.min(total, t.end_day);
+    const lp = ((s-1)/total*100).toFixed(2);
+    const wp = ((e-s+1)/total*100).toFixed(2);
+
+    let cells = "";
+    for (let d = 1; d <= total; d++) {
+      const dow = new Date(viewYear, viewMonth, d).getDay();
+      const cls = ["dc", isCur&&d===todayD?"today":"", (dow===0||dow===6)?"wknd":""].filter(Boolean).join(" ");
+      cells += `<div class="${cls}" style="grid-column:${d}"></div>`;
+    }
+    const tl = isCur ? `<div class="today-line" style="left:${((todayD-0.5)/total*100).toFixed(2)}%"></div>` : "";
+
+    rowsHtml += `
+    <div class="gantt-row${t.done?" done":""}" draggable="true"
+         data-id="${t.id}"
+         ondragstart="onDragStart(event,${t.id})"
+         ondragover="onDragOver(event)"
+         ondragleave="onDragLeave(event)"
+         ondrop="onDrop(event,${t.id})">
+      <div class="task-lbl">
+        <span class="drag-handle" title="ドラッグで並び替え">
+          <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+            <circle cx="3" cy="2.5" r="1.2"/><circle cx="7" cy="2.5" r="1.2"/>
+            <circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/>
+            <circle cx="3" cy="11.5" r="1.2"/><circle cx="7" cy="11.5" r="1.2"/>
+          </svg>
+        </span>
+        <span>${t.name}</span>
+        <div class="act">
+          <button class="icon-btn" onclick="openEdit(${t.id})" title="編集">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 1.5l1.5 1.5L3 8.5H1.5V7L7 1.5z"/></svg>
+          </button>
+          <button class="icon-btn" onclick="copyTask(${t.id})" title="コピー">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="5.5" height="5.5" rx="1"/><path d="M1 6.5V1.5A.5.5 0 0 1 1.5 1h5"/></svg>
+          </button>
+          <button class="icon-btn del" onclick="confirmDelete(${t.id})" title="削除">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
+          </button>
+          <button class="icon-btn rfsh${t.done?" show":""}" onclick="confirmToggle(${t.id},${t.done})" title="未完了に戻す">
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M9.5 2A5 5 0 1 0 10 5.5"/><polyline points="7,0.5 9.5,2 8,4.5"/></svg>
+          </button>
+          <button class="icon-btn chk${t.done?" on":""}" onclick="confirmToggle(${t.id},${t.done})">
+            <svg width="10" height="7" viewBox="0 0 10 7" fill="none"><path d="M1 3L3.5 5.5L9 1" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="days-row" style="grid-template-columns:repeat(${total},1fr)">
+        ${cells}
+        <div class="bar-layer">
+          ${tl}
+          <div class="bar ${state}" style="left:calc(${lp}% + 1px);width:calc(${wp}% - 2px)"></div>
+        </div>
+      </div>
+    </div>`;
+  });
+
+  document.getElementById("gantt-wrap").innerHTML = `
+    <div class="gantt-card">
+      <div class="gantt-head">
+        <div class="task-col-head">タスク名</div>
+        <div class="days-head" style="grid-template-columns:repeat(${total},1fr)">${headHtml}</div>
+      </div>
+      ${rowsHtml || '<div class="loading">タスクがありません</div>'}
+    </div>`;
+}
+
+// ── ドラッグ＆ドロップ並び替え ──────────────────────
+function onDragStart(e, id) {
+  dragSrcId = id;
+  e.currentTarget.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.classList.add("drag-over");
+}
+
+function onDragLeave(e) {
+  e.currentTarget.classList.remove("drag-over");
+}
+
+function onDrop(e, targetId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove("drag-over");
+  if (dragSrcId === targetId) return;
+
+  const srcIdx = tasks.findIndex(t => t.id === dragSrcId);
+  const tgtIdx = tasks.findIndex(t => t.id === targetId);
+  const moved  = tasks.splice(srcIdx, 1)[0];
+  tasks.splice(tgtIdx, 0, moved);
+
+  render();
+  saveSortOrder();
+  toast("順番を保存しました");
+  dragSrcId = null;
+}
+
+// ── モーダル ──────────────────────────────────────
+function confirmToggle(id, currentDone) {
+  const task  = tasks.find(t => t.id === id);
+  const label = currentDone ? "未完了に戻す" : "完了にする";
+  document.getElementById("modal-root").innerHTML = `
+    <div class="overlay"><div class="modal confirm-body">
+      <p>${task.name}</p>
+      <small>「${label}」でよろしいですか？</small>
+      <div class="modal-btns">
+        <button class="btn" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="execToggle(${id},${currentDone})">確定</button>
+      </div>
+    </div></div>`;
+}
+function execToggle(id, currentDone) { closeModal(); setDone(id, !currentDone); }
+
+function confirmDelete(id) {
+  const task = tasks.find(t => t.id === id);
+  document.getElementById("modal-root").innerHTML = `
+    <div class="overlay"><div class="modal confirm-body">
+      <p>${task.name}</p>
+      <small>このタスクを削除しますか？この操作は取り消せません。</small>
+      <div class="modal-btns">
+        <button class="btn" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-danger" onclick="execDelete(${id})">削除</button>
+      </div>
+    </div></div>`;
+}
+function execDelete(id) { closeModal(); deleteTask(id); }
+
+function openAdd() {
+  const total = daysInMonth(viewYear, viewMonth);
+  document.getElementById("modal-root").innerHTML = `
+    <div class="overlay"><div class="modal">
+      <h3>タスクを追加</h3>
+      <div class="field"><label>タスク名</label><input id="f-name" type="text" placeholder="例：請求書作成"></div>
+      <div class="field"><label>開始日</label><input id="f-start" type="number" min="1" max="${total}" placeholder="1〜${total}"></div>
+      <div class="field"><label>期限日</label><input id="f-end" type="number" min="1" max="${total}" placeholder="1〜${total}">
+        <div class="err" id="f-err"></div></div>
+      <div class="modal-btns">
+        <button class="btn" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="submitAdd(${total})">追加</button>
+      </div>
+    </div></div>`;
+  document.getElementById("f-name").focus();
+}
+function submitAdd(total) {
+  const name = document.getElementById("f-name").value.trim();
+  const s = parseInt(document.getElementById("f-start").value);
+  const e = parseInt(document.getElementById("f-end").value);
+  const err = document.getElementById("f-err");
+  if (!name)                    { err.textContent = "タスク名を入力してください"; return; }
+  if (!s || s < 1 || s > total) { err.textContent = "開始日が正しくありません"; return; }
+  if (!e || e < 1 || e > total) { err.textContent = "期限日が正しくありません"; return; }
+  if (e < s)                    { err.textContent = "期限日は開始日以降にしてください"; return; }
+  closeModal(); addTask(name, s, e);
+}
+
+function openEdit(id) {
+  const task = tasks.find(t => t.id === id);
+  const total = daysInMonth(viewYear, viewMonth);
+  document.getElementById("modal-root").innerHTML = `
+    <div class="overlay"><div class="modal">
+      <h3>タスクを編集</h3>
+      <div class="field"><label>タスク名</label><input id="e-name" type="text" value="${task.name}"></div>
+      <div class="field"><label>開始日</label><input id="e-start" type="number" min="1" max="${total}" value="${task.start_day}"></div>
+      <div class="field"><label>期限日</label><input id="e-end" type="number" min="1" max="${total}" value="${task.end_day}">
+        <div class="err" id="e-err"></div></div>
+      <div class="modal-btns">
+        <button class="btn" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-primary" onclick="submitEdit(${id},${total})">保存</button>
+      </div>
+    </div></div>`;
+  document.getElementById("e-name").focus();
+}
+function submitEdit(id, total) {
+  const name = document.getElementById("e-name").value.trim();
+  const s = parseInt(document.getElementById("e-start").value);
+  const e = parseInt(document.getElementById("e-end").value);
+  const err = document.getElementById("e-err");
+  if (!name)                    { err.textContent = "タスク名を入力してください"; return; }
+  if (!s || s < 1 || s > total) { err.textContent = "開始日が正しくありません"; return; }
+  if (!e || e < 1 || e > total) { err.textContent = "期限日が正しくありません"; return; }
+  if (e < s)                    { err.textContent = "期限日は開始日以降にしてください"; return; }
+  closeModal(); updateTask(id, name, s, e);
+}
+
+function closeModal() { document.getElementById("modal-root").innerHTML = ""; }
+
+function changeMonth(dir) {
+  viewMonth += dir;
+  if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+  if (viewMonth < 0)  { viewMonth = 11; viewYear--; }
+  fetchTasks();
+}
+
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2500);
+}
+
+fetchTasks();
+</script>
+</body>
+</html>
